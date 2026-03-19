@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         IGX Radiosonde Alert
 // @namespace    https://rs.igx.kr/
-// @version      1.1.0
-// @description  모델 점수 회복 감지 알림. 감시할 모델과 임계 점수를 설정하면 점수가 회복될 때 소리/팝업으로 알림.
+// @version      1.2.0
+// @description  모델 점수 변화 감지 알림. 감시할 모델과 임계 점수를 설정하면 점수가 회복/하락할 때 소리/팝업으로 알림.
 // @author       IGX User
 // @match        https://rs.igx.kr/*
 // @grant        GM_setValue
@@ -459,6 +459,14 @@
       color: rgba(255,255,255,0.90);
       margin-top: 2px;
     }
+    /* ── 하락 토스트 (색상 오버라이드) ── */
+    .rsa-toast.drop {
+      background: rgba(28, 14, 14, 0.97);
+      border-color: rgba(220,80,70,0.55);
+    }
+    .rsa-toast.drop .rsa-toast-title {
+      color: rgba(255,100,90,1);
+    }
     @keyframes rsa-in {
       from { opacity: 0; transform: translateX(18px) scale(0.97); }
       to   { opacity: 1; transform: translateX(0) scale(1); }
@@ -531,6 +539,29 @@
     });
   }
 
+  // 하락 경보음: 하강 3음 (긴박한 느낌)
+  function beepDrop() {
+    const ctx = getCtx();
+    if (!ctx) return;
+    const vol = Math.min(100, Math.max(0, Number(load(KEY.volume, 70)))) / 100 * 0.5;
+    // 880 Hz → 660 Hz → 440 Hz 하강 3음
+    [[880, 0, 0.20], [660, 0.18, 0.20], [440, 0.36, 0.32]].forEach(([hz, t, dur]) => {
+      try {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'triangle';   // 회복음(sine)과 음색 구분
+        osc.frequency.setValueAtTime(hz, ctx.currentTime + t);
+        gain.gain.setValueAtTime(0, ctx.currentTime + t);
+        gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + dur + 0.05);
+      } catch (_) {}
+    });
+  }
+
   // ─────────────────────────────────────────────────────────
   //  인앱 토스트
   // ─────────────────────────────────────────────────────────
@@ -560,6 +591,22 @@
     }, 5500);
   }
 
+  function showDropToast(modelId, score) {
+    const name = modelId.replace(/^model-/, '');
+    const t    = document.createElement('div');
+    t.className = 'rsa-toast drop';
+    t.innerHTML = `
+      <div class="rsa-toast-title">⚠️ 점수 기준치 이탈</div>
+      <div class="rsa-toast-model">${name}</div>
+      <div class="rsa-toast-score">${score}점으로 하락</div>
+    `;
+    getToastWrap().appendChild(t);
+    setTimeout(() => {
+      t.style.animation = 'rsa-out 0.28s ease forwards';
+      setTimeout(() => t.remove(), 300);
+    }, 5500);
+  }
+
   // ─────────────────────────────────────────────────────────
   //  시스템 Notification
   // ─────────────────────────────────────────────────────────
@@ -575,6 +622,18 @@
     } catch (_) {}
   }
 
+  function sysDropNotify(modelId, score) {
+    if (Notification.permission !== 'granted') return;
+    const name = modelId.replace(/^model-/, '');
+    try {
+      new Notification('IGX Radiosonde — 점수 기준치 이탈', {
+        body: `${name}  →  ${score}점으로 하락`,
+        icon: '/assets/logo.svg',
+        tag:  'rsalert-drop-' + modelId,
+      });
+    } catch (_) {}
+  }
+
   // ─────────────────────────────────────────────────────────
   //  알림 발화
   // ─────────────────────────────────────────────────────────
@@ -585,6 +644,16 @@
       else showToast(modelId, score);
     } else {
       showToast(modelId, score);
+    }
+  }
+
+  function fireDropAlert(modelId, score) {
+    if (load(KEY.sound, true))  beepDrop();
+    if (load(KEY.popup, true)) {
+      if (Notification.permission === 'granted') sysDropNotify(modelId, score);
+      else showDropToast(modelId, score);
+    } else {
+      showDropToast(modelId, score);
     }
   }
 
@@ -603,16 +672,24 @@
     saveJSON(KEY.prevScores, cur);
 
     const hits = [];
+    const drops = [];
     for (const [id, curScore] of Object.entries(cur)) {
       if (!watched[id]) continue;
       const prevScore = (id in prev) ? prev[id] : null;
       const wasBelow  = prevScore === null || prevScore < threshold;
+      const wasAbove  = prevScore !== null && prevScore >= threshold;
+
+      // 상승 엣지: 임계값 미만 → 이상 (상태 회복)
       if (wasBelow && curScore >= threshold) hits.push({ id, score: curScore });
+      // 하락 엣지: 임계값 이상 → 미만 (기준치 이탈)
+      if (wasAbove && curScore < threshold)  drops.push({ id, score: curScore });
     }
 
     if (hits.length > 0) {
-      // DOM 정착 + AudioContext 준비 여유 시간
       setTimeout(() => hits.forEach(h => fireAlert(h.id, h.score)), 900);
+    }
+    if (drops.length > 0) {
+      setTimeout(() => drops.forEach(d => fireDropAlert(d.id, d.score)), 900);
     }
   }
 
