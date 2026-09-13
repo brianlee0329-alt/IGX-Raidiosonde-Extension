@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IGX Radiosonde Closer
 // @namespace    https://rs.igx.kr/
-// @version      1.4.1
+// @version      1.4.2
 // @description  IGX Radiosonde 페이지 개별 모델 카드 및 그룹 단위 접기↔펼치기 + 5분 강제 새로고침 + 점수 등급별 카드 배경 강조
 // @author       IGX User
 // @match        https://rs.igx.kr/*
@@ -111,6 +111,13 @@
   // ─────────────────────────────────────────────────────────
   const GROUPS = [
     {
+      key:    'fable',
+      family: 'claude',
+      label: '⚪ Claude Fable',
+      color: '#ffffff',
+      match: (id) => id.startsWith('model-claude-fable'),
+    },
+    {
       key:    'opus',
       family: 'claude',
       label: '🔵 Claude Opus',
@@ -141,6 +148,13 @@
       match: (id) =>
         id.startsWith('model-gemini') &&
         id.includes('flash'),
+    },
+    {
+      key:    'gpt',
+      family: 'gpt',
+      label: '🟤 GPT',
+      color: '#C3B091',
+      match: (id) => id.startsWith('model-gpt')
     },
   ];
 
